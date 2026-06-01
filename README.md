@@ -24,6 +24,7 @@ Edit the **`CONFIG`** object at the top of `script.js`:
 - `memories` — your shared moments
 - `heartWords` — words revealed in the heart game
 - `finaleTitle`, `finaleSub`, `modalTitle`, `modalText` — closing messages
+- `musicSrc`, `musicVolume` — background song path and loudness (see `audio/README.md`)
 
 ## Deploy (free)
 
@@ -41,5 +42,5 @@ Or use GitHub Pages / Vercel — same folder, zero build step needed.
 - Scroll-triggered card & timeline animations (GSAP)
 - Tap-the-hearts mini game
 - Confetti surprise modal
-- Optional soft chime music (🎵 button)
+- Looping background music (starts on first tap; 🎵 button to pause)
 - Mobile-friendly & reduced-motion support

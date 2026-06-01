@@ -52,6 +52,10 @@ Happy Children's Day, my favorite person in the entire universe.`,
   finaleSub: "You're still my favorite kid — today and always.",
   modalTitle: "I love you",
   modalText: "More than all the stars, all the balloons, and every silly little dream we haven't dreamed yet. You are my greatest gift.",
+
+  // Alban Skenderaj — VASHA (add the MP3 file to audio/ — see audio/README.md)
+  musicSrc: "audio/alban-skenderaj-vasha.mp3",
+  musicVolume: 0.35,
 };
 
 /* ============================================================ */
@@ -607,43 +611,160 @@ document.getElementById("startBtn").addEventListener("click", () => {
   });
 });
 
-/* --- Ambient music (Web Audio soft chime loop) --- */
+/* --- Background music (MP3 loop + built-in ambient fallback) --- */
 function initMusic() {
   const btn = document.getElementById("musicBtn");
+  const icon = document.getElementById("musicIcon");
+  const audio = document.getElementById("bgMusic");
   let playing = false;
-  let ctx, interval;
+  let unlocked = false;
+  let useFallback = false;
+  let audioCtx = null;
+  let fallbackNodes = null;
+  let melodyTimer = null;
 
-  btn.addEventListener("click", async () => {
-    if (!playing) {
-      ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+  audio.volume = CONFIG.musicVolume;
+  if (CONFIG.musicSrc) {
+    audio.src = CONFIG.musicSrc;
+  }
 
-      function playChime() {
-        const notes = [523.25, 659.25, 783.99, 1046.5];
-        notes.forEach((freq, i) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.type = "sine";
-          osc.frequency.value = freq;
-          gain.gain.setValueAtTime(0, ctx.currentTime + i * 0.15);
-          gain.gain.linearRampToValueAtTime(0.06, ctx.currentTime + i * 0.15 + 0.05);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 1.2);
-          osc.start(ctx.currentTime + i * 0.15);
-          osc.stop(ctx.currentTime + i * 0.15 + 1.2);
-        });
+  function setUiState(isPlaying) {
+    playing = isPlaying;
+    btn.classList.toggle("playing", isPlaying);
+    btn.classList.toggle("muted", !isPlaying);
+    icon.textContent = isPlaying ? "🎵" : "🔇";
+    btn.title = isPlaying ? "Music on — tap to pause" : "Music off — tap to play";
+    btn.setAttribute("aria-label", isPlaying ? "Pause background music" : "Play background music");
+  }
+
+  function startFallbackLoop() {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (fallbackNodes) return;
+
+    const master = audioCtx.createGain();
+    master.gain.value = CONFIG.musicVolume * 0.85;
+    master.connect(audioCtx.destination);
+
+    const padNotes = [261.63, 329.63, 392, 523.25];
+    const padOscs = padNotes.map((freq) => {
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      g.gain.value = 0.018;
+      osc.connect(g);
+      g.connect(master);
+      osc.start();
+      return osc;
+    });
+
+    const melody = [523.25, 587.33, 659.25, 783.99, 880, 783.99, 659.25, 587.33, 523.25, 440, 493.88, 523.25];
+    const noteLen = 0.55;
+    let melodyStep = 0;
+
+    function playNote() {
+      const freq = melody[melodyStep % melody.length];
+      melodyStep += 1;
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = "triangle";
+      osc.frequency.value = freq;
+      const t = audioCtx.currentTime;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.07, t + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.001, t + noteLen);
+      osc.connect(g);
+      g.connect(master);
+      osc.start(t);
+      osc.stop(t + noteLen + 0.05);
+    }
+
+    melodyTimer = setInterval(playNote, noteLen * 1000);
+    playNote();
+    fallbackNodes = { master, padOscs, melodyTimer };
+  }
+
+  function stopFallbackLoop() {
+    if (!fallbackNodes) return;
+    clearInterval(fallbackNodes.melodyTimer);
+    fallbackNodes.padOscs.forEach((o) => {
+      try { o.stop(); } catch (_) { /* already stopped */ }
+    });
+    fallbackNodes.master.disconnect();
+    fallbackNodes = null;
+    melodyTimer = null;
+  }
+
+  async function startMusic() {
+    if (playing) return;
+    unlocked = true;
+
+    if (!useFallback && CONFIG.musicSrc) {
+      try {
+        if (audio.paused) await audio.play();
+        setUiState(true);
+        return;
+      } catch (_) {
+        useFallback = true;
       }
-
-      playChime();
-      interval = setInterval(playChime, 4000);
-      playing = true;
-      btn.classList.add("playing");
     } else {
-      clearInterval(interval);
-      playing = false;
-      btn.classList.remove("playing");
+      useFallback = true;
+    }
+
+    startFallbackLoop();
+    if (audioCtx?.state === "suspended") await audioCtx.resume();
+    setUiState(true);
+  }
+
+  function pauseMusic() {
+    if (!playing) return;
+    if (!useFallback && audio.src) {
+      audio.pause();
+    } else {
+      stopFallbackLoop();
+      if (audioCtx?.state === "running") audioCtx.suspend();
+    }
+    setUiState(false);
+  }
+
+  function toggleMusic() {
+    if (playing) pauseMusic();
+    else startMusic();
+  }
+
+  audio.addEventListener("error", () => {
+    useFallback = true;
+    if (playing && !fallbackNodes) {
+      audio.pause();
+      startFallbackLoop();
     }
   });
+
+  audio.addEventListener("ended", () => {
+    if (!audio.loop) audio.currentTime = 0;
+    if (playing && !audio.paused) audio.play().catch(() => {});
+  });
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    unlocked = true;
+    toggleMusic();
+  });
+
+  function unlockOnInteraction() {
+    if (unlocked) return;
+    unlocked = true;
+    startMusic();
+  }
+
+  document.addEventListener("click", unlockOnInteraction, { once: true });
+  document.addEventListener("touchstart", unlockOnInteraction, { once: true, passive: true });
+
+  window.addEventListener("load", () => {
+    if (!CONFIG.musicSrc) useFallback = true;
+  });
+
+  setUiState(false);
 }
 
 /* --- Init all --- */
